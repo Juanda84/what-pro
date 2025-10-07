@@ -22,47 +22,49 @@ RUN npm run build \
 
 # -------- runtime --------
 # ---- runtime ----
-FROM nginx:1.27-alpine
-
+# ---- runtime ----
+FROM nginx:alpine
 ENV PUBLIC_HTML=/usr/share/nginx/html
 
 RUN rm -f /etc/nginx/conf.d/default.conf \
  && printf '%s\n' \
-   'server {' \
-   '  listen 80;' \
-   '  server_name _;' \
-   '  resolver 127.0.0.11 ipv6=off valid=10s;' \
-   '  set $backend http://backend:8080;' \
-   '' \
-   '  root /usr/share/nginx/html;' \
-   '  index index.html;' \
-   '' \
-   '  # WebSocket/socket.io -> backend' \
-   '  location /socket.io/ {' \
-   '    proxy_pass $backend/socket.io/;' \
-   '    proxy_http_version 1.1;' \
-   '    proxy_set_header Upgrade $http_upgrade;' \
-   '    proxy_set_header Connection "Upgrade";' \
-   '    proxy_set_header Host $host;' \
-   '    proxy_read_timeout 600s;' \
-   '    proxy_send_timeout 600s;' \
-   '  }' \
-   '' \
-   '  # API (rutas típicas del backend)' \
-   '  location ~ ^/(auth|users|tickets|contacts|whatsapp|settings|queues|messages|media|uploads)(/|$) {' \
-   '    proxy_pass $backend$request_uri;' \
-   '    proxy_set_header Host $host;' \
-   '    proxy_set_header X-Real-IP $remote_addr;' \
-   '    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;' \
-   '    proxy_set_header X-Forwarded-Proto $scheme;' \
-   '  }' \
-   '' \
-   '  # Assets estáticos del frontend' \
-   '  location /assets/ { try_files $uri =404; access_log off; }' \
-   '' \
-   '  # SPA fallback' \
-   '  location / { try_files $uri /index.html; }' \
-   '}' > /etc/nginx/conf.d/default.conf
+'server {' \
+'  listen 80;' \
+'  server_name _;' \
+'  root /usr/share/nginx/html;' \
+'  index index.html;' \
+'' \
+'  # === WebSocket / Socket.IO ===' \
+'  location /socket.io/ {' \
+'    proxy_pass http://backend:8080;' \
+'    proxy_http_version 1.1;' \
+'    proxy_set_header Upgrade $http_upgrade;' \
+'    proxy_set_header Connection "Upgrade";' \
+'    proxy_set_header Host $host;' \
+'  }' \
+'' \
+'  # === Endpoints REST que el frontend llama sin prefijo /api ===' \
+'  location ^~ /auth/          { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /users          { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /settings       { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /whatsapp       { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /queues         { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /quickAnswers   { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /tickets        { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /messages       { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /contacts       { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'  location ^~ /media          { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'' \
+'  # (si tu backend también expone /api, lo dejamos cubierto igual)' \
+'  location ^~ /api/           { proxy_pass http://backend:8080; proxy_set_header Host $host; }' \
+'' \
+'  # === SPA: todo lo demás sirve index.html ===' \
+'  location / {' \
+'    try_files $uri $uri/ /index.html;' \
+'  }' \
+'}' \
+> /etc/nginx/conf.d/default.conf
+
 
 COPY --from=build /usr/src/app/dist ${PUBLIC_HTML}
 EXPOSE 80
