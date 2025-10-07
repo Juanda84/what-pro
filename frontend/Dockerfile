@@ -21,21 +21,23 @@ RUN npm run build \
  && if [ -d build ]; then mv build dist; fi
 
 # -------- runtime --------
+# ---- runtime ----
 FROM nginx:1.27-alpine
 
 ENV PUBLIC_HTML=/usr/share/nginx/html
 
 RUN rm -f /etc/nginx/conf.d/default.conf \
  && printf '%s\n' \
-   'resolver 127.0.0.11 ipv6=off valid=10s;' \
-   'set $backend http://backend:8080;' \
-   '' \
    'server {' \
    '  listen 80;' \
    '  server_name _;' \
+   '  resolver 127.0.0.11 ipv6=off valid=10s;' \
+   '  set $backend http://backend:8080;' \
+   '' \
    '  root /usr/share/nginx/html;' \
    '  index index.html;' \
    '' \
+   '  # WebSocket/socket.io -> backend' \
    '  location /socket.io/ {' \
    '    proxy_pass $backend/socket.io/;' \
    '    proxy_http_version 1.1;' \
@@ -46,6 +48,7 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
    '    proxy_send_timeout 600s;' \
    '  }' \
    '' \
+   '  # API (rutas típicas del backend)' \
    '  location ~ ^/(auth|users|tickets|contacts|whatsapp|settings|queues|messages|media|uploads)(/|$) {' \
    '    proxy_pass $backend$request_uri;' \
    '    proxy_set_header Host $host;' \
@@ -54,7 +57,10 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
    '    proxy_set_header X-Forwarded-Proto $scheme;' \
    '  }' \
    '' \
+   '  # Assets estáticos del frontend' \
    '  location /assets/ { try_files $uri =404; access_log off; }' \
+   '' \
+   '  # SPA fallback' \
    '  location / { try_files $uri /index.html; }' \
    '}' > /etc/nginx/conf.d/default.conf
 
