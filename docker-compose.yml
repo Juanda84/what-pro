@@ -1,0 +1,141 @@
+version: "3.9"
+
+services:
+  db:
+    image: mariadb:10.6
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: whaticket
+      MYSQL_USER: whaticket
+      MYSQL_PASSWORD: supersecretpassword
+      MYSQL_ROOT_PASSWORD: rootpassword
+      TZ: America/Bogota
+    volumes:
+      - whatpro-db:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:6
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - whatpro-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Crea el admin si no existe (solo al inicio; luego sale)
+  seed-admin:
+    image: node:20-alpine
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_USER: whaticket
+      DB_PASS: supersecretpassword
+      DB_NAME: whaticket
+      ADMIN_EMAIL: admin@local.local
+      ADMIN_PASSWORD: admin123
+      ADMIN_NAME: Administrador
+    command: >
+      sh -c "
+      npm init -y >/dev/null 2>&1 &&
+      npm add mysql2 bcryptjs >/dev/null 2>&1 &&
+      node -e '
+        (async () => {
+          const mysql = require(\"mysql2/promise\");
+          const bcrypt = require(\"bcryptjs\");
+          const {
+            DB_HOST = \"db\",
+            DB_USER = \"whaticket\",
+            DB_PASS = \"supersecretpassword\",
+            DB_NAME = \"whaticket\",
+            ADMIN_EMAIL = \"admin@local.local\",
+            ADMIN_PASSWORD = \"admin123\",
+            ADMIN_NAME = \"Administrador\"
+          } = process.env;
+
+          const conn = await mysql.createConnection({
+            host: DB_HOST, user: DB_USER, password: DB_PASS, database: DB_NAME
+          });
+
+          const [rows] = await conn.execute(
+            \"SELECT id FROM Users WHERE email = ? LIMIT 1\", [ADMIN_EMAIL]
+          );
+
+          if (!rows || rows.length === 0) {
+            const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+            const now = new Date();
+            await conn.execute(
+              `INSERT INTO Users (name, email, passwordHash, profile, createdAt, updatedAt)
+               VALUES (?, ?, ?, 'admin', ?, ?)`,
+              [ADMIN_NAME, ADMIN_EMAIL, hash, now, now]
+            );
+            console.log(\"✔ Admin creado:\", ADMIN_EMAIL);
+          } else {
+            console.log(\"ℹ Admin ya existe:\", ADMIN_EMAIL);
+          }
+          await conn.end();
+        })().catch(e => { console.error(e); process.exit(1); });
+      '
+      "
+    restart: "no"
+
+  backend:
+    build:
+      context: https://github.com/Juanda84/what-pro.git#master:backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      # No es obligatorio esperar a seed-admin; se ejecuta muy rápido y el admin ya queda creado.
+    environment:
+      DB_HOST: db
+      DB_USER: whaticket
+      DB_PASS: supersecretpassword
+      DB_NAME: whaticket
+      REDIS_URI: redis://redis:6379
+      JWT_SECRET: myjwtsecret
+      ADMIN_EMAIL: admin@local.local
+      ADMIN_PASSWORD: admin123
+      ADMIN_NAME: Administrador
+      FRONTEND_URL: http://72.60.169.104:3000
+      PROXY: "true"
+      TZ: America/Bogota
+      PORT: "8080"
+    ports:
+      - "8081:8080"
+    volumes:
+      - whatpro-media:/usr/src/app/public
+    shm_size: "1gb"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: https://github.com/Juanda84/what-pro.git#master:frontend
+      dockerfile: Dockerfile
+      # opcional (por si tu build usa VITE_API_URL en tiempo de build)
+      args:
+        - VITE_API_URL=http://72.60.169.104:8081
+    depends_on:
+      - backend
+    ports:
+      - "3000:80"     # Nginx (80 interno) -> 3000 externo
+    restart: unless-stopped
+
+volumes:
+  whatpro-db:
+  whatpro-redis:
+  whatpro-media:
