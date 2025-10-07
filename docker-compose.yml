@@ -1,5 +1,5 @@
 version: "3.9"
- 
+
 services:
   db:
     image: mariadb:10.6
@@ -33,7 +33,7 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Crea el admin si no existe (solo al inicio; luego sale)
+  # Crea el usuario admin si no existe y sale
   seed-admin:
     image: node:20-alpine
     depends_on:
@@ -48,47 +48,9 @@ services:
       ADMIN_PASSWORD: admin123
       ADMIN_NAME: Administrador
     command: >
-      sh -c "
-      npm init -y >/dev/null 2>&1 &&
+      sh -lc 'npm init -y >/dev/null 2>&1 &&
       npm add mysql2 bcryptjs >/dev/null 2>&1 &&
-      node -e '
-        (async () => {
-          const mysql = require(\"mysql2/promise\");
-          const bcrypt = require(\"bcryptjs\");
-          const {
-            DB_HOST = \"db\",
-            DB_USER = \"whaticket\",
-            DB_PASS = \"supersecretpassword\",
-            DB_NAME = \"whaticket\",
-            ADMIN_EMAIL = \"admin@local.local\",
-            ADMIN_PASSWORD = \"admin123\",
-            ADMIN_NAME = \"Administrador\"
-          } = process.env;
-
-          const conn = await mysql.createConnection({
-            host: DB_HOST, user: DB_USER, password: DB_PASS, database: DB_NAME
-          });
-
-          const [rows] = await conn.execute(
-            \"SELECT id FROM Users WHERE email = ? LIMIT 1\", [ADMIN_EMAIL]
-          );
-
-          if (!rows || rows.length === 0) {
-            const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
-            const now = new Date();
-            await conn.execute(
-              `INSERT INTO Users (name, email, passwordHash, profile, createdAt, updatedAt)
-               VALUES (?, ?, ?, 'admin', ?, ?)`,
-              [ADMIN_NAME, ADMIN_EMAIL, hash, now, now]
-            );
-            console.log(\"✔ Admin creado:\", ADMIN_EMAIL);
-          } else {
-            console.log(\"ℹ Admin ya existe:\", ADMIN_EMAIL);
-          }
-          await conn.end();
-        })().catch(e => { console.error(e); process.exit(1); });
-      '
-      "
+      node -e "(async()=>{ const mysql=require(\"mysql2/promise\"); const bcrypt=require(\"bcryptjs\"); const env=process.env; const DB_HOST=env.DB_HOST||\"db\"; const DB_USER=env.DB_USER||\"whaticket\"; const DB_PASS=env.DB_PASS||\"supersecretpassword\"; const DB_NAME=env.DB_NAME||\"whaticket\"; const ADMIN_EMAIL=env.ADMIN_EMAIL||\"admin@local.local\"; const ADMIN_PASSWORD=env.ADMIN_PASSWORD||\"admin123\"; const ADMIN_NAME=env.ADMIN_NAME||\"Administrador\"; const conn=await mysql.createConnection({host:DB_HOST,user:DB_USER,password:DB_PASS,database:DB_NAME}); const [rows]=await conn.execute(\"SELECT id FROM Users WHERE email = ? LIMIT 1\",[ADMIN_EMAIL]); if(!rows||rows.length===0){ const hash=await bcrypt.hash(ADMIN_PASSWORD,10); const now=new Date(); await conn.execute(\"INSERT INTO Users (name, email, passwordHash, profile, createdAt, updatedAt) VALUES (?, ?, ?, 'admin', ?, ?)\",[ADMIN_NAME,ADMIN_EMAIL,hash,now,now]); console.log(\"✔ Admin creado:\",ADMIN_EMAIL);} else { console.log(\"ℹ Admin ya existe:\",ADMIN_EMAIL);} await conn.end(); })().catch(e=>{console.error(e);process.exit(1);})"'
     restart: "no"
 
   backend:
@@ -100,7 +62,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_started
-      # No es obligatorio esperar a seed-admin; se ejecuta muy rápido y el admin ya queda creado.
     environment:
       DB_HOST: db
       DB_USER: whaticket
@@ -116,7 +77,7 @@ services:
       TZ: America/Bogota
       PORT: "8080"
     ports:
-      - "8081:8080"
+      - "8081:8080"              # backend expuesto en 8081
     volumes:
       - whatpro-media:/usr/src/app/public
     shm_size: "1gb"
@@ -126,13 +87,12 @@ services:
     build:
       context: https://github.com/Juanda84/what-pro.git#master:frontend
       dockerfile: Dockerfile
-      # opcional (por si tu build usa VITE_API_URL en tiempo de build)
       args:
         - VITE_API_URL=http://72.60.169.104:8081
     depends_on:
       - backend
     ports:
-      - "3000:80"     # Nginx (80 interno) -> 3000 externo
+      - "3000:80"               # nginx (80) -> 3000 externo
     restart: unless-stopped
 
 volumes:
