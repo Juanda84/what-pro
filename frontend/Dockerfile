@@ -8,7 +8,10 @@ RUN apk add --no-cache python3 make g++
 COPY package*.json ./
 RUN npm install --no-audit --no-fund --legacy-peer-deps
 
-# copia todo y compila
+# Pasar la URL del backend en build (Vite usa VITE_* en build)
+ARG VITE_API_URL
+ENV VITE_API_URL=${VITE_API_URL}
+
 COPY . .
 RUN npm run build \
  && if [ -d build ]; then mv build dist; fi
@@ -16,20 +19,14 @@ RUN npm run build \
 # ---- runtime ----
 FROM nginx:alpine
 
-RUN apk add --no-cache jq openssl wget
+# Directorio estándar de Nginx para estáticos
+ENV PUBLIC_HTML=/usr/share/nginx/html
 
-ENV DOCKERIZE_VERSION=v0.6.1
-RUN wget -q https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz \
- && tar -C /usr/local/bin -xzvf dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz \
- && rm dockerize-alpine-linux-amd64-${DOCKERIZE_VERSION}.tar.gz
+# Crear un default.conf MUY simple y válido (SPA: react/vite)
+RUN rm -f /etc/nginx/conf.d/default.conf \
+ && printf 'server {\n  listen 80;\n  server_name _;\n  root %s;\n  index index.html;\n  location / {\n    try_files $uri /index.html;\n  }\n}\n' "$PUBLIC_HTML" > /etc/nginx/conf.d/default.conf
 
-ENV PUBLIC_HTML=/var/www/public/
-
-COPY .docker/nginx /etc/nginx/
+# Copiar build del frontend
 COPY --from=build /usr/src/app/dist ${PUBLIC_HTML}
 
-COPY .docker/add-env-vars.sh /docker-entrypoint.d/01-add-env-vars.sh
-RUN chmod +x /docker-entrypoint.d/01-add-env-vars.sh
-
 EXPOSE 80
-
