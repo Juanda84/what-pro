@@ -30,7 +30,7 @@ ENV PUBLIC_HTML=/var/www/public/
 COPY .docker/nginx /etc/nginx/
 
 # Copiar el build de Vite
-COPY --from=build /usr/src/app/dist ${PUBLIC_HTML}
+COPY --from=build /usr/src/app/build ${PUBLIC_HTML}
 
 # Script que inyecta variables en arranque (si tu proyecto lo usa)
 COPY .docker/add-env-vars.sh /docker-entrypoint.d/01-add-env-vars.sh
