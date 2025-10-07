@@ -1,45 +1,48 @@
-FROM node:20-bookworm
-
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates wget gnupg curl fonts-dejavu fonts-liberation fonts-freefont-ttf libxss1 \
- && rm -rf /var/lib/apt/lists/*
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential python3 \
- && rm -rf /var/lib/apt/lists/*
-
-ENV DOCKERIZE_VERSION=v0.6.1
-RUN wget -q https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz \
- && tar -C /usr/local/bin -xzvf dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz \
- && rm dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz
-
-RUN install -m 0755 -d /etc/apt/keyrings \
- && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /etc/apt/keyrings/google-linux.gpg \
- && echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-linux.gpg] http://dl.google.com/linux/chrome/deb stable main" \
-    | tee /etc/apt/sources.list.d/google-chrome.list > /dev/null \
- && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
- && rm -rf /var/lib/apt/lists/*
-
-ADD https://github.com/Yelp/dumb-init/releases/download/v1.2.1/dumb-init_1.2.1_amd64 /usr/local/bin/dumb-init
-RUN chmod +x /usr/local/bin/dumb-init
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV CHROME_BIN=google-chrome-stable
+# =========================
+#  Builder
+# =========================
+FROM node:20-bullseye AS build
 
 WORKDIR /usr/src/app
+
+# Instala dependencias
 COPY package*.json ./
-RUN npm install --no-audit --no-fund --legacy-peer-deps
+RUN npm ci
+
+# Copia el código
 COPY . .
+
+# Compila (si tu backend compila a dist)
 RUN npm run build
 
-ENV NODE_ENV=production
-ENV PORT=3000
-EXPOSE 3000
+# =========================
+#  Runtime
+# =========================
+FROM node:20-bullseye
 
-ENTRYPOINT ["dumb-init","--"]
-CMD dockerize -wait tcp://${DB_HOST:-db}:3306 -timeout 120s \
- && npx sequelize db:migrate \
- && node dist/server.js
+# utilidades
+RUN apt-get update && apt-get install -y wget ca-certificates gnupg && rm -rf /var/lib/apt/lists/*
 
+# dockerize para esperar a MySQL
+ENV DOCKERIZE_VERSION=v0.6.1
+RUN wget -O - https://github.com/jwilder/dockerize/releases/download/${DOCKERIZE_VERSION}/dockerize-linux-amd64-${DOCKERIZE_VERSION}.tar.gz \
+  | tar -C /usr/local/bin -xzvf -
+
+WORKDIR /usr/src/app
+
+# Copiamos solo lo necesario desde build
+COPY --from=build /usr/src/app/package*.json ./
+COPY --from=build /usr/src/app/node_modules ./node_modules
+COPY --from=build /usr/src/app/dist ./dist
+# copiamos también el script de seed (se copió en build)
+COPY --from=build /usr/src/app/scripts ./scripts
+
+ENV PORT=8080
+EXPOSE 8080
+
+# IMPORTANTE: corre migraciones + seed y arranca
+CMD dockerize -wait tcp://${DB_HOST:-db}:3306 -timeout 60s \
+  && npx sequelize db:migrate \
+  && node scripts/seedAdmin.js \
+  && node dist/server.js
 
